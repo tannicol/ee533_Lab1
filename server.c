@@ -5,11 +5,26 @@
 #include <sys/types.h> 
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <signal.h>  //for the while loop calls, namely to do the zombie fix
 
 void error(char *msg)
 {
     perror(msg);
     exit(1);
+}
+
+void dostuff (int sockfd) //this MUST be moved outside of main to decouple it from while(1)
+{
+   int n;
+   char buffer[256];
+      
+   bzero(buffer,256);
+   n = read(sockfd,buffer,255);
+   if (n < 0) error("ERROR reading from socket");
+   printf("Here is the message: %s\n",buffer);
+   
+   n = write(sockfd,"I got your message",18);
+   if (n < 0) error("ERROR writing to socket");
 }
 
 int main(int argc, char *argv[])
@@ -18,6 +33,7 @@ int main(int argc, char *argv[])
     char buffer[256];
     struct sockaddr_in serv_addr, cli_addr;
     int n;
+    int pid; //zombie fix and infinite while enhancement
 
     if (argc < 2) {
         fprintf(stderr,"ERROR, no port provided\n");
@@ -40,17 +56,25 @@ int main(int argc, char *argv[])
     listen(sockfd,5);
     clilen = sizeof(cli_addr);
 
-    newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, (socklen_t *)&clilen);
-    if (newsockfd < 0) 
-        error("ERROR on accept");
+    signal(SIGCHLD,SIG_IGN); //Ubuntu 22.04 should behave similarly to AIX architectures, so opting to use this ZOMBIE fix
 
-    bzero(buffer,256);
-    n = read(newsockfd,buffer,255);
-    if (n < 0) error("ERROR reading from socket");
-    printf("Here is the message: %s\n",buffer);
-
-    n = write(newsockfd,"I got your message",18);
-    if (n < 0) error("ERROR writing to socket");
+    while (1) 
+    { 
+        newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen); 
+        if (newsockfd < 0) 
+        error("ERROR on accept"); 
+        pid = fork(); 
+        if (pid < 0) 
+        error("ERROR on fork"); 
+        if (pid == 0) 
+        { 
+        close(sockfd); 
+        dostuff(newsockfd); 
+        exit(0); 
+        } 
+        else 
+        close(newsockfd); 
+    } /* end of while */ 
 
     return 0; 
 }
